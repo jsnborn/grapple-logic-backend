@@ -1,6 +1,8 @@
 package com.grapplelogic.engine.domain;
 
 public enum MoveType {
+    // These are the "Constants". They are like static instances of this class.
+    // The numbers in the parentheses are passed to the constructor below
     DOUBLE_LEG("Takedown", "Takedown Defense"),
     PULL_GUARD("Ground Bottom", "Takedown Defense"),
     ARMBAR("Submission", "Ground Bottom"),

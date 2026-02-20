@@ -23,15 +23,9 @@ public class MatchController {
      * Accessible via POST http://localhost:8080/api/v1/match/resolve
      */
     @PostMapping("/resolve")
-    public ResponseEntity<TurnResult> resolveExchange(@RequestBody MatchRequest request) {
-
-        TurnResult result = combatService.resolveMove(
-                request.attacker(),
-                request.defender(),
-                request.move(),
-                request.currentPosition()
-        );
-
-        return ResponseEntity.ok(result);
+    public TurnResult resolve(@RequestParam(required = false) Long playerId, @RequestBody MatchRequest request) {
+        return combatService.resolveTurn(playerId, request);
     }
+
+
 }

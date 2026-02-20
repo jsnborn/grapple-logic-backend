@@ -3,74 +3,93 @@ package com.grapplelogic.engine.service;
 import com.grapplelogic.engine.domain.GrapplingClass;
 import com.grapplelogic.engine.domain.MatchPosition;
 import com.grapplelogic.engine.domain.MoveType;
+import com.grapplelogic.engine.domain.Player;
+import com.grapplelogic.engine.dto.MatchRequest;
 import com.grapplelogic.engine.dto.TurnResult;
+import com.grapplelogic.engine.repository.PlayerRepository;
 import org.springframework.stereotype.Service;
+
+import java.util.Optional;
 
 @Service
 public class CombatService {
 
-    // Core logic to resolve a move between two grapplers using RNG (D20 roll)
-    public boolean calculateSuccess(GrapplingClass attacker, GrapplingClass defender, MoveType move) {
-        int attackStat = getStatValue(attacker, move.getAttackerStat());
-        int defenseStat = getStatValue(defender, move.getDefenderStat());
+    private final PlayerRepository playerRepository;
 
-        // Roll a 20-sided die
-        int roll = (int) (Math.random() * 20) + 1;
-
-        // Formula: Roll + Attacker Stat > Defender Stat + 10 (Base Difficulty)
-        return (roll + attackStat) > (defenseStat + 10);
+    public CombatService(PlayerRepository playerRepository) {
+        this.playerRepository = playerRepository;
     }
 
-    private int getStatValue(GrapplingClass gClass, String statName) {
-        return switch (statName) {
-            case "Takedown" -> gClass.getTakedown();
-            case "Takedown Defense" -> gClass.getTakedownDefense();
-            case "Ground Top" -> gClass.getGroundTop();
-            case "Ground Bottom" -> gClass.getGroundBottom();
-            case "Submission" -> gClass.getSubmission();
-            default -> 5;
-        };
-    }
+    public TurnResult resolveTurn(Long playerId, MatchRequest request) {
+        MoveType move = request.move();
+        GrapplingClass attacker = request.attacker();
+        GrapplingClass defender = request.defender();
+        MatchPosition currentPos = request.currentPosition();
 
-    public TurnResult resolveMove(GrapplingClass attacker, GrapplingClass defender, MoveType move, MatchPosition currentPos) {
-
-        // 1. Position Check: You can't RNC if you aren't on the back!
-        if (move == MoveType.REAR_NAKED_CHOKE && currentPos != MatchPosition.BACK_CONTROL) {
-            return new TurnResult(false, "You need to take the back before attempting an RNC!", 0, currentPos, false);
-        }
-
-        // 2. Standard Math Logic
-        int attackStat = getStatValue(attacker, move.getAttackerStat());
-        int defenseStat = getStatValue(defender, move.getDefenderStat());
-        int roll = (int) (Math.random() * 20) + 1;
-
-        boolean success = (roll + attackStat) > (defenseStat + 10);
-
-        // 3. Determine New Position & Points
+        boolean success = false;
+        String actionLog = "Invalid move for this position.";
         MatchPosition nextPos = currentPos;
-        int pointsEarned = 0;
         boolean isGameOver = false;
+        int pointsGained = 0;
 
-        if (success) {
-            pointsEarned = move.getPoints();
-            nextPos = determineNextPosition(move);
-            if (move == MoveType.REAR_NAKED_CHOKE || move == MoveType.ARMBAR) {
-                isGameOver = true;
-                nextPos = MatchPosition.SUBMITTED;
+        // Standing Phase
+        if (move == MoveType.DOUBLE_LEG || move == MoveType.PULL_GUARD) {
+            if (currentPos == MatchPosition.STANDING) {
+                success = (attacker.getTakedown() + (int)(Math.random() * 10)) >
+                        (defender.getTakedownDefense() + (int)(Math.random() * 10));
+
+                if (success) {
+                    nextPos = (move == MoveType.DOUBLE_LEG) ? MatchPosition.SIDE_CONTROL : MatchPosition.GUARD;
+                    actionLog = attacker + " successfully executed " + move;
+                } else {
+                    actionLog = defender + " stuffed the attempt!";
+                }
+            }
+        }
+        // Transition Phase
+        else if (move == MoveType.BACK_TAKE) {
+            if (currentPos == MatchPosition.SIDE_CONTROL || currentPos == MatchPosition.GUARD) {
+                success = true;
+                nextPos = MatchPosition.BACK_CONTROL;
+                actionLog = attacker + " took the back!";
+            }
+        }
+        // Finishing Phase
+        else if (move == MoveType.REAR_NAKED_CHOKE) {
+            if (currentPos == MatchPosition.BACK_CONTROL) {
+                success = (attacker.getSubmission() + (int)(Math.random() * 10)) > 5;
+                if (success) {
+                    actionLog = attacker + " forced the tap with an RNC!";
+                    isGameOver = true;
+                    pointsGained = 10; // Assigning points for the UI
+                } else {
+                    actionLog = defender + " fought off the hands!";
+                }
             }
         }
 
-        String log = success ? "Successful " + move : attacker + " failed the " + move;
-        return new TurnResult(success, log, pointsEarned, nextPos, isGameOver);
+        // Database Update
+        if (isGameOver && playerId != null) {
+            applyRewards(playerId);
+        }
+
+        // Return with all 5 required parameters for the TurnResult record
+        return new TurnResult(
+                success,
+                actionLog,
+                nextPos.name(),
+                isGameOver,
+                pointsGained
+        );
     }
 
-    private MatchPosition determineNextPosition(MoveType move) {
-        return switch (move) {
-            // Logic for how positions transition
-            case DOUBLE_LEG -> MatchPosition.SIDE_CONTROL;
-            case BACK_TAKE -> MatchPosition.BACK_CONTROL;
-            case PULL_GUARD -> MatchPosition.GUARD;
-            default -> MatchPosition.STANDING;
-        };
+    private void applyRewards(Long playerId) {
+        Optional<Player> playerOpt = playerRepository.findById(playerId);
+        if (playerOpt.isPresent()) {
+            Player player = playerOpt.get();
+            player.setXp(player.getXp() + 10);
+            player.setWins(player.getWins() + 1);
+            playerRepository.save(player); // Persist to PostgreSQL
+        }
     }
 }
